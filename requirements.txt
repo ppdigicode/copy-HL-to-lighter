@@ -8,7 +8,7 @@ websockets>=12.0
 
 # Exchange SDKs
 hyperliquid-python-sdk>=0.1.0
-lighter
+git+https://github.com/elliottech/lighter-python.git
 
 # Utilities
 asyncio>=3.4.3
