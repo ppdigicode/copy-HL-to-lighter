@@ -1,0 +1,14 @@
+# Core dependencies
+python-dotenv>=1.0.0
+eth-account>=0.9.0
+
+# WebSocket libraries
+websocket-client>=1.6.0
+websockets>=12.0
+
+# Exchange SDKs
+hyperliquid-python-sdk>=0.1.0
+lighter
+
+# Utilities
+asyncio>=3.4.3
