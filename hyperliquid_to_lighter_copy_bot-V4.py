@@ -48,7 +48,7 @@ class CopyTradingBot:
     """
 
     def __init__(self):
-        print("\n🤖 Hyperliquid→Lighter Copy Trading Bot v3.0 (Position Tagging)")
+        print("\n🤖 Hyperliquid→Lighter Copy Trading Bot v4.0 (Error simplification)")
 
         load_dotenv()
 
