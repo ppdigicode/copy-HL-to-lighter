@@ -48,7 +48,7 @@ class CopyTradingBot:
     """
 
     def __init__(self):
-        print("\n🤖 Hyperliquid→Lighter Copy Trading Bot v4.0")
+        print("\n🤖 Hyperliquid→Lighter Copy Trading Bot v3.0 (Position Tagging)")
 
         load_dotenv()
 
@@ -553,7 +553,12 @@ class CopyTradingBot:
 
         except Exception as e:
             if not self.stop_event.is_set():
-                print(f"⚠️  Error syncing target positions from Hyperliquid: {type(e).__name__}: {e}")
+                e_str = str(e)
+                code = next((c for c in ['500', '502', '503', '504', '429'] if c in e_str), None)
+                if code:
+                    print(f"⚠️  HL API unavailable (HTTP {code}), retrying...")
+                else:
+                    print(f"⚠️  Error syncing target positions from Hyperliquid: {type(e).__name__}: {e_str[:80]}")
 
     def _sync_target_actual_positions(self):
         """Sync target trader's actual positions (wrapper for thread)"""
@@ -572,7 +577,14 @@ class CopyTradingBot:
                 future.result(timeout=5)  # Wait max 5 seconds
         except Exception as e:
             if not self.stop_event.is_set():  # Only log if not shutting down
-                print(f"   ❌ Error in target position sync: {e}")
+                e_str = str(e)
+                code = next((c for c in ['500', '502', '503', '504', '429'] if c in e_str), None)
+                if code:
+                    print(f"⚠️  HL API unavailable (HTTP {code}), retrying...")
+                elif not e_str or 'TimeoutError' in type(e).__name__:
+                    print(f"⚠️  Target position sync timeout, retrying...")
+                else:
+                    print(f"⚠️  Target position sync error: {type(e).__name__}: {e_str[:80]}")
 
     def _check_orphan_positions(self):
         """
@@ -1979,6 +1991,10 @@ class CopyTradingBot:
                     }))
                     
                     print("✅ Lighter WebSocket connected. Tracking our fills...")
+                    if hasattr(self, '_lighter_ws_disconnect_time') and self._lighter_ws_disconnect_time is not None:
+                        elapsed = time.time() - self._lighter_ws_disconnect_time
+                        print(f"✅ Lighter WS reconnected after {elapsed:.0f}s outage")
+                    self._lighter_ws_disconnect_time = None
                     
                     while not self.stop_event.is_set():
                         try:
