@@ -1155,6 +1155,9 @@ class MeanReversionBot:
                                             # V5: Update 1-minute bars
                                             self.update_1min_bar(now, mid)
                                             
+                                            # V5.3-MCI: Update 10-second bars
+                                            self.update_10s_bar(mid, now)
+                                            
                                             self.last_price_sample = now
                                 
                                 # Trades
