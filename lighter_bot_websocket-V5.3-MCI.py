@@ -366,8 +366,8 @@ class MeanReversionBot:
         print(f"  ret_30s filter: {'ON' if self.use_ret_filter else 'OFF'}")
         if self.use_ret_filter:
             print(f"    ret threshold: {self.ret_threshold}%")
-        print(f"
-🎯 Entry Timing (V5.3-MCI):")
+        print()
+        print("🎯 Entry Timing (V5.3-MCI):")
         print(f"  MCI Trigger: {'ON' if self.use_mci_trigger else 'OFF (legacy rebound)'}")
         if self.use_mci_trigger:
             print(f"    EMA length: {self.mci_ema_len}")
