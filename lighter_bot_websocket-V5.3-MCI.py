@@ -378,12 +378,12 @@ class MeanReversionBot:
         print(f"  Exit Z: reversion {self.z_exit}, stop {self.z_stop}")
         print(f"  Time cap: {self.max_hold_time_sec}s")
         print(f"  SHORT: {'ENABLED' if self.enable_short else 'DISABLED'}")
-        print(f"\n🎯 State Machine (Wait for rebound):")
-        print(f"  Mode: {'ENABLED' if self.wait_for_rebound else 'DISABLED (immediate entry)'}")
-        if self.wait_for_rebound:
-            print(f"  Rebound threshold: {self.rebound_threshold_pct*100:.0f}% of |Z|")
+        print(f"\n🎯 Entry Timing:")
+        print(f"  MCI Trigger: {'ENABLED' if self.use_mci_trigger else 'DISABLED (immediate entry)'}")
+        if self.use_mci_trigger:
+            print(f"  MCI EMA length: {self.mci_ema_len}")
+            print(f"  MCI sigma window: {self.mci_sigma_window}")
             print(f"  Max wait time: {self.max_wait_time}s")
-            print(f"  Entry on timeout: {'YES' if self.entry_on_timeout else 'NO (disarm)'}")
         print()
         
         signal.signal(signal.SIGINT, lambda s,f: asyncio.create_task(self.shutdown()))
@@ -624,8 +624,8 @@ class MeanReversionBot:
         # STATE MACHINE LOGIC
         # ════════════════════════════════════════════════════════════════
         
-        if not self.wait_for_rebound:
-            # CLASSIC MODE: Immediate entry (no state machine)
+        if not self.use_mci_trigger:
+            # CLASSIC MODE: Immediate entry (no MCI timing)
             return self._check_signal_immediate(z, current_close, mid, ema_trend, ema_n, rsi)
         
         # STATE MACHINE MODE
@@ -672,13 +672,10 @@ class MeanReversionBot:
                 return {'type': None}
         
         # ──────────────────────────────────────────────────────────────
-        # STATE: ARMED_LONG - Wait for rebound
+        # STATE: ARMED_LONG - Wait for MCI flip
         # ──────────────────────────────────────────────────────────────
         elif self.signal_state == "armed_long":
             elapsed = now - self.armed_time
-            
-            # Calculate relative rebound threshold
-            rebound_threshold = abs(self.armed_z) * self.rebound_threshold_pct
             
             # Check if signal still valid (trend filter)
             if self.use_trend_filter and current_close < ema_trend:
@@ -686,56 +683,41 @@ class MeanReversionBot:
                 self.signal_state = "idle"
                 return {'type': None}
             
-            # REBOUND DETECTED: z is going UP (relative to armed_z)
-            if z > self.armed_z + rebound_threshold:
-                print(f"✅ REBOUND DETECTED: z={self.armed_z:.2f} → {z:.2f} (+{z - self.armed_z:.2f})")
+            # MCI FLIP DETECTED: prix rebondit
+            if self.check_mci_flip('long'):
+                mci_str = f"{self.mci:.3f}" if self.mci is not None else "N/A"
+                mci_prev_str = f"{self.mci_prev:.3f}" if self.mci_prev is not None else "N/A"
+                
+                print(f"✅ MCI FLIP DETECTED: {mci_prev_str} → {mci_str} (LONG)")
                 self.signal_state = "idle"
                 
                 ret_str = f"{ret_30s*100:+.2f}%" if ret_30s is not None else "N/A"
                 
                 return {
                     'type': 'long',
-                    'reason': f'LONG REBOUND z={z:.2f} (from {self.armed_z:.2f}) | ret={ret_str}',
+                    'reason': f'LONG MCI={mci_str} z={z:.2f} ret={ret_str}',
                     'price': mid,
                     'z': z,
-                    'ema_n': ema_n,
+                    'mci': self.mci,
                     'ret_30s': ret_30s
                 }
             
             # TIMEOUT: Max wait time exceeded
             if elapsed > self.max_wait_time:
-                if self.entry_on_timeout:
-                    print(f"⏱️  TIMEOUT: Entering anyway after {elapsed:.0f}s")
-                    self.signal_state = "idle"
-                    
-                    ret_str = f"{ret_30s*100:+.2f}%" if ret_30s is not None else "N/A"
-                    
-                    return {
-                        'type': 'long',
-                        'reason': f'LONG TIMEOUT z={z:.2f} (armed {self.armed_z:.2f}) | ret={ret_str}',
-                        'price': mid,
-                        'z': z,
-                        'ema_n': ema_n,
-                        'ret_30s': ret_30s
-                    }
-                else:
-                    print(f"⏱️  TIMEOUT: Signal expired after {elapsed:.0f}s")
-                    self.signal_state = "idle"
-                    return {'type': None}
+                print(f"⏱️  TIMEOUT: Signal expired after {elapsed:.0f}s")
+                self.signal_state = "idle"
+                return {'type': None}
             
-            # Still waiting...
+            # Still waiting for MCI flip...
             if int(elapsed) % 3 == 0 and int(elapsed) > 0:  # Log every 3s
-                target_z = self.armed_z + rebound_threshold
-                print(f"⏳ ARMED LONG: z={z:.2f} (need >{target_z:.2f}) | Wait {elapsed:.0f}s/{self.max_wait_time}s")
+                mci_str = f"{self.mci:.3f}" if self.mci is not None else "N/A"
+                print(f"⏳ ARMED LONG: z={z:.2f} mci={mci_str} | Wait {elapsed:.0f}s/{self.max_wait_time}s")
         
         # ──────────────────────────────────────────────────────────────
-        # STATE: ARMED_SHORT - Wait for rebound
+        # STATE: ARMED_SHORT - Wait for MCI flip
         # ──────────────────────────────────────────────────────────────
         elif self.signal_state == "armed_short":
             elapsed = now - self.armed_time
-            
-            # Calculate relative rebound threshold
-            rebound_threshold = abs(self.armed_z) * self.rebound_threshold_pct
             
             # Check if signal still valid (trend filter)
             if self.use_trend_filter and current_close > ema_trend:
@@ -743,47 +725,35 @@ class MeanReversionBot:
                 self.signal_state = "idle"
                 return {'type': None}
             
-            # REBOUND DETECTED: z is going DOWN (relative to armed_z)
-            if z < self.armed_z - rebound_threshold:
-                print(f"✅ REBOUND DETECTED: z={self.armed_z:.2f} → {z:.2f} ({z - self.armed_z:.2f})")
+            # MCI FLIP DETECTED: prix plonge
+            if self.check_mci_flip('short'):
+                mci_str = f"{self.mci:.3f}" if self.mci is not None else "N/A"
+                mci_prev_str = f"{self.mci_prev:.3f}" if self.mci_prev is not None else "N/A"
+                
+                print(f"✅ MCI FLIP DETECTED: {mci_prev_str} → {mci_str} (SHORT)")
                 self.signal_state = "idle"
                 
                 ret_str = f"{ret_30s*100:+.2f}%" if ret_30s is not None else "N/A"
                 
                 return {
                     'type': 'short',
-                    'reason': f'SHORT REBOUND z={z:.2f} (from {self.armed_z:.2f}) | ret={ret_str}',
+                    'reason': f'SHORT MCI={mci_str} z={z:.2f} ret={ret_str}',
                     'price': mid,
                     'z': z,
-                    'ema_n': ema_n,
+                    'mci': self.mci,
                     'ret_30s': ret_30s
                 }
             
             # TIMEOUT: Max wait time exceeded
             if elapsed > self.max_wait_time:
-                if self.entry_on_timeout:
-                    print(f"⏱️  TIMEOUT: Entering anyway after {elapsed:.0f}s")
-                    self.signal_state = "idle"
-                    
-                    ret_str = f"{ret_30s*100:+.2f}%" if ret_30s is not None else "N/A"
-                    
-                    return {
-                        'type': 'short',
-                        'reason': f'SHORT TIMEOUT z={z:.2f} (armed {self.armed_z:.2f}) | ret={ret_str}',
-                        'price': mid,
-                        'z': z,
-                        'ema_n': ema_n,
-                        'ret_30s': ret_30s
-                    }
-                else:
-                    print(f"⏱️  TIMEOUT: Signal expired after {elapsed:.0f}s")
-                    self.signal_state = "idle"
-                    return {'type': None}
+                print(f"⏱️  TIMEOUT: Signal expired after {elapsed:.0f}s")
+                self.signal_state = "idle"
+                return {'type': None}
             
-            # Still waiting...
+            # Still waiting for MCI flip...
             if int(elapsed) % 3 == 0 and int(elapsed) > 0:  # Log every 3s
-                target_z = self.armed_z - rebound_threshold
-                print(f"⏳ ARMED SHORT: z={z:.2f} (need <{target_z:.2f}) | Wait {elapsed:.0f}s/{self.max_wait_time}s")
+                mci_str = f"{self.mci:.3f}" if self.mci is not None else "N/A"
+                print(f"⏳ ARMED SHORT: z={z:.2f} mci={mci_str} | Wait {elapsed:.0f}s/{self.max_wait_time}s")
         
         return {'type': None}
     
